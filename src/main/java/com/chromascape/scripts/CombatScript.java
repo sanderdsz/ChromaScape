@@ -1,5 +1,6 @@
 package com.chromascape.scripts;
 
+import com.chromascape.utils.actions.MouseOver;
 import com.chromascape.utils.actions.PointSelector;
 import com.chromascape.utils.core.runtime.ScriptStoppedException;
 import com.chromascape.utils.core.screen.colour.ColourInstances;
@@ -16,11 +17,13 @@ import com.chromascape.utils.net.InventoryConsumer;
 import com.chromascape.utils.net.InventoryPayload;
 import com.chromascape.utils.net.InventoryItem;
 import com.chromascape.utils.actions.MovingObject;
+import com.chromascape.utils.net.SkillConsumer;
 import java.awt.*;
 import java.awt.Point;
 import java.util.Arrays;
 import java.awt.Rectangle;
 import java.awt.image.BufferedImage;
+import java.util.OptionalInt;
 import org.bytedeco.opencv.opencv_core.Scalar;
 import java.io.IOException;
 import java.time.Duration;
@@ -36,11 +39,16 @@ public class CombatScript extends com.chromascape.base.BaseScript {
   private static String lastMessage;
   public static Point lastMonsterLocation;
   private static final String bones = "/images/user/Bones.png";
+  private static final String bigBones = "/images/user/Big_bones.png";
+  private static final String cookedMeat = "/images/user/Cooked_meat.png";
 
-  private static final ColourObj whiteTag = new ColourObj("WhiteTag", new Scalar(0, 0, 69, 0), new Scalar(1, 1, 148, 0));
-  private static final ColourObj greenTag = new ColourObj("GreenTag", new Scalar(59, 89, 91, 0), new Scalar(60, 255, 188, 0));
-  private static final ColourObj redTag = new ColourObj("RedTag", new Scalar(0, 51, 110, 0), new Scalar(1, 173, 255, 0));
-  private static final ColourObj blueTag = new ColourObj("BlueTag", new Scalar(117, 102, 116, 0), new Scalar(125, 234, 220, 0));
+  //private static final ColourObj whiteTag = new ColourObj("WhiteTag", new Scalar(0, 0, 69, 0), new Scalar(1, 1, 148, 0));
+  //private static final ColourObj greenTag = new ColourObj("GreenTag", new Scalar(47, 65, 43, 0), new Scalar(63, 91, 219, 0));
+  //private static final ColourObj redTag = new ColourObj("RedTag", new Scalar(0, 103, 93, 0), new Scalar(4, 129, 251, 0));
+  //private static final ColourObj blueTag = new ColourObj("BlueTag", new Scalar(117, 102, 116, 0), new Scalar(125, 234, 220, 0));
+  
+  private static final ColourObj yellowTag = new ColourObj("YellowTag", new Scalar(27, 245, 103, 0), new Scalar(42, 255, 195, 0));
+  private OptionalInt currentHitpoints = OptionalInt.empty();
 
   public CombatScript() {
     super();
@@ -51,42 +59,41 @@ public class CombatScript extends com.chromascape.base.BaseScript {
     logger.info("Combat start!");
     clickMonster();
     waitUntilStopCombat(10);
-    int whiteCount = countItem(whiteTag);
-    int greenCount = countItem(greenTag);
-    int redCount = countItem(redTag);
-    int blueCount = countItem(blueTag);
-    while (blueCount > 0) {
-      clickTag(blueTag);
-      waitRandomMillis(1500, 2000);
-      blueCount = countItem(blueTag);
+    
+    currentHitpoints = SkillConsumer.fetchCurrentHitpoints();
+    currentHitpoints.ifPresent(hp -> logger.info("Current hitpoints: {}", hp));
+
+    if (currentHitpoints.isPresent() && currentHitpoints.getAsInt() < 60) {
+      logger.info("Current hitpoints {} below 60, waiting before picking up items", currentHitpoints.getAsInt());
+      clickOnInventoryPosition(findItemPositions("Cooked Meat")[0]);
+      waitRandomMillis(1000, 1500);
     }
-    /* 
+    
+    int yellowCount = countItem(yellowTag, "Yellow");
+
     while (!isInventoryFull()) {
-      whiteCount = countItem(whiteTag);
-      if (whiteCount <= 0) {
+      yellowCount = countItem(yellowTag, "Yellow");
+      if (yellowCount <= 0) {
         break;
       }
-      clickTag(whiteTag);
+      clickTag(yellowTag, "Yellow");
       waitRandomMillis(1500, 2000);
-    }*/
+    }
+
     isInventoryFullOfBones();
     while (findItemPositions("Bones").length > 0) {
       clickOnInventoryPosition(findItemPositions("Bones")[0]);
       waitRandomMillis(1000, 1500);
-      findItemPositions("Bones" );
+      findItemPositions("Bones");
     }
-    /* 
-    while (redCount > 0) {
-      clickTag(redTag);
-      waitRandomMillis(2000, 3000);
-      redCount = countItem(redTag);
+
+    while (findItemPositions("Iron Arrow").length > 0) {
+      clickOnInventoryPosition(findItemPositions("Iron Arrow")[0]);
+      waitRandomMillis(1000, 1500);
+      findItemPositions("Iron Arrow");
     }
-    while (greenCount > 0) {
-      clickTag(greenTag);
-      waitRandomMillis(2000, 3000);
-      greenCount = countItem(greenTag);
-    }
-      */
+
+    
   }
 
   /**
@@ -118,74 +125,74 @@ public class CombatScript extends com.chromascape.base.BaseScript {
     try {
       controller().mouse().moveTo(clickLocation, "fast");
       controller().mouse().leftClick();
-      logger.info("Clicked on purple monster object at {}", clickLocation);
+      String monsterName = captureMonsterName();
+      logger.info("Clicked on purple monster: {}", monsterName);
       lastMonsterLocation = clickLocation;
     } catch (Exception e) {
       logger.error("Error while clicking monster: {}", e.getMessage(), e);
     }
   }
 
-  private void clickGreenTag() {
-    Point clickLocation = new Point();
+  private String captureMonsterName() {
     try {
-      clickLocation =
-          PointSelector.getRandomPointByColourObj(
-              controller().zones().getGameView(), greenTag, MAX_ATTEMPTS, 15.0);
-    } catch (Exception e) {
-      logger.error("Failed while generating green item click location: {}", String.valueOf(e));
-      return;
-    }
-
-    if (clickLocation == null) {
-      logger.error("clickGreenTag click location is null");
-      return;
-    }
-
-    try {
-      controller().mouse().moveTo(clickLocation, "fast");
-      controller().mouse().leftClick();
-      logger.info("Clicked on green item at {}", clickLocation);
-    } catch (Exception e) {
-      logger.error(e.getMessage());
-      return;
+      return sanitizeMonsterName(MouseOver.getText(this));
+    } catch (IOException e) {
+      logger.debug("MouseOver name read failed: {}", e.getMessage());
+      return null;
     }
   }
 
-  private void clickTag(ColourObj colour) {
+  private String sanitizeMonsterName(String raw) {
+    if (raw == null) {
+      return null;
+    }
+    String cleaned = raw.replace("\u00A0", " ");
+    String trimmed = cleaned.trim();
+    if (!trimmed.toLowerCase().startsWith("attack")) {
+      return null;
+    }
+    cleaned = cleaned.replaceAll("(?i)attack", " ");
+    int parenIndex = cleaned.indexOf('(');
+    if (parenIndex >= 0) {
+      cleaned = cleaned.substring(0, parenIndex);
+    }
+    cleaned = cleaned.replaceAll("[^\\p{L}\\s]", " ");
+    cleaned = cleaned.replaceAll("\\s+", " ").trim();
+    return cleaned.isEmpty() ? null : cleaned;
+  }
+
+  private void clickTag(ColourObj colour, String colourName) {
     Point clickLocation = new Point();
     try {
       clickLocation =
           PointSelector.getRandomPointByColourObj(
               controller().zones().getGameView(), colour, MAX_ATTEMPTS, 15.0);
     } catch (Exception e) {
-      logger.error("Failed while generating {} item click location: {}", colour, String.valueOf(e));
+      logger.error("Failed while generating {} item click location: {}", colourName, String.valueOf(e));
       return;
     }
 
     if (clickLocation == null) {
-      logger.error("click {} Tag click location is null", colour);
+      logger.error("click {} Tag click location is null", colourName);
       return;
     }
 
     try {
       controller().mouse().moveTo(clickLocation, "fast");
       controller().mouse().leftClick();
-      logger.info("Clicked on {} item at {}", colour, clickLocation);
+      logger.info("Clicked on {} item", colourName);
     } catch (Exception e) {
-      logger.error(e.getMessage());
+      logger.error("Error while clicking {} item: {}", colourName, e.getMessage(), e);
       return;
     }
   }
 
-  private int countItem(ColourObj colour) {
+  private int countItem(ColourObj colour, String colourName) {
     try {
-      //controller().keyboard().sendArrowKey(39, "right");
-      //waitRandomMillis(80, 100);
       BufferedImage gameView = controller().zones().getGameView();
       List<ChromaObj> objs = ColourContours.getChromaObjsInColour(gameView, colour);
       int count = objs == null ? 0 : objs.size();
-      logger.info("Detected {} {} item(s) on screen", count, colour);
-      // release native mats
+      logger.info("Detected {} {} item(s) on screen", count, colourName);
       if (objs != null) {
         for (ChromaObj obj : objs) {
           try {
@@ -196,7 +203,7 @@ public class CombatScript extends com.chromascape.base.BaseScript {
       }
       return count;
     } catch (Exception e) {
-      logger.error("Failed to count {} items: {}", colour, String.valueOf(e));
+      logger.error("Failed to count {} items: {}", colourName, String.valueOf(e));
       return 0;
     }
   }
@@ -211,8 +218,8 @@ public class CombatScript extends com.chromascape.base.BaseScript {
         try {
           Duration remaining = Duration.between(Instant.now(), deadline);
           if (!remaining.isNegative() && !remaining.isZero()) {
-            if (waitForStraightIdle(Duration.ofSeconds(3), remaining)) {
-              logger.info("Player is idle according to events payload (confirmed 3s)");
+            if (waitForStraightIdle(Duration.ofSeconds(5), remaining)) {
+              logger.info("Player is idle according to events payload (confirmed 5s)");
               return;
             }
           }
@@ -305,7 +312,7 @@ public class CombatScript extends com.chromascape.base.BaseScript {
       Point click = new Point(invSlot.x + invSlot.width / 2, invSlot.y + invSlot.height / 2);
       controller().mouse().moveTo(click, "fast");
       controller().mouse().leftClick();
-      logger.info("Clicked inventory slot {} at {}", pos, click);
+      logger.info("Clicked inventory slot {}", pos);
     } catch (Exception e) {
       logger.error("Failed to click inventory slot {}: {}", pos, e.getMessage());
     }
