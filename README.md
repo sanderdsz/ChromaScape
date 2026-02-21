@@ -22,6 +22,33 @@ Whether you're just starting out or building advanced automation systems, Chroma
 # Setup
 Check out a full **step by step guide** on how to get started [Read the Installation Guide](https://github.com/StaticSweep/ChromaScape/wiki/Pre%E2%80%90requisite-installations)
 
+## Run locally
+
+- Windows (PowerShell or CMD):
+
+```powershell
+.\gradlew.bat build
+.\gradlew.bat bootRun
+```
+
+- Unix / Git Bash / WSL:
+
+```bash
+./gradlew build
+./gradlew bootRun
+```
+
+- Build a runnable jar and run manually:
+
+```bash
+./gradlew bootJar
+java -jar build/libs/ChromaScape-0.3.0-SNAPSHOT.jar
+```
+
+Notes:
+- The project expects native KInput DLLs to be available in `build/dist` (see `copyNativeLibraries` in `build.gradle.kts`). If you don't have prebuilt DLLs, follow the instructions in `third_party/DEV_README.md` to build `KInput` and `KInputCtrl` and place the produced `*.dll` files under `third_party/KInput/KInput/KInput/bin/Release` and `third_party/KInput/KInput/KInputCtrl/bin/Release` so the build can copy them into `build/dist`.
+- The web UI is served at http://localhost:8080 once the app is started.
+
 # Documentation and Tutorials
 - Please visit the [Wiki](https://github.com/StaticSweep/ChromaScape/wiki) for detailed guides on writing scripts with this framework.
 - Feel free to join the [Discord](https://discord.gg/4FjPfDXd46)

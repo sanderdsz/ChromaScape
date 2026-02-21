@@ -219,6 +219,21 @@ public class VirtualMouseUtils {
   }
 
   /**
+   * Scrolls the mouse wheel at the current virtual cursor location.
+   *
+   * @param rotation Positive for scroll up, negative for scroll down.
+   */
+  public void scrollWheel(int rotation) {
+    BaseScript.checkInterrupted();
+    StateManager.setState(BotState.ACTING);
+    StatisticsManager.incrementInputs();
+    Point clientPoint = ScreenManager.toClientCoords(currentPosition);
+    synchronized (kinputLock) {
+      kinput.scrollWheel(clientPoint.x, clientPoint.y, rotation);
+    }
+  }
+
+  /**
    * Simulates a middle mouse button input.
    *
    * @param eventType The event code (501 for press, 502 for release).

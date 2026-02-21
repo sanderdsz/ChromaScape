@@ -53,6 +53,7 @@ public class Idler {
         if ((idleText.contains("moving") || idleText.contains("idle"))
             && !timeStamp.equals(lastMessage)) {
           lastMessage = timeStamp;
+          logger.info("Idle message detected: '{}', timestamp: '{}'", idleText, timeStamp);
           return;
         }
       }
