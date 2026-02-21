@@ -43,7 +43,7 @@ public class CombatScript extends com.chromascape.base.BaseScript {
   protected void cycle() {
     logger.info("Combat start!");
     clickMonster();
-    waitUntilStopCombat(25);
+    waitUntilStopCombat(100);
 
     currentHitpoints = SkillConsumer.fetchCurrentHitpoints();
     currentHitpoints.ifPresent(hp -> logger.info("Current hitpoints: {}", hp));
@@ -64,8 +64,7 @@ public class CombatScript extends com.chromascape.base.BaseScript {
         clickOnInventoryPosition(cookedMeatPositions[0]);
         waitRandomMillis(1000, 1500);
       }
-    }
-    */
+    }*/
     
     pressRandomArrowForTwoSeconds();
     int yellowCount = countItem(yellowTag, "Yellow");
@@ -79,22 +78,31 @@ public class CombatScript extends com.chromascape.base.BaseScript {
       waitRandomMillis(1500, 2000);
     }
 
-    while (findItemPositions("Big Bones").length > 0) {
-      clickOnInventoryPosition(findItemPositions("Big Bones")[0]);
+    while (true) {
+      int[] positions = findItemPositions("Big Bones");
+      if (positions.length == 0) {
+        break;
+      }
+      clickOnInventoryPosition(positions[0]);
       waitRandomMillis(1000, 1500);
-      findItemPositions("Big Bones");
     }
 
-    while (findItemPositions("Bones").length > 0) {
-      clickOnInventoryPosition(findItemPositions("Bones")[0]);
+    while (true) {
+      int[] positions = findItemPositions("Bones");
+      if (positions.length == 0) {
+        break;
+      }
+      clickOnInventoryPosition(positions[0]);
       waitRandomMillis(1000, 1500);
-      findItemPositions("Bones");
     }
 
-    while (findItemPositions("Iron Arrow").length > 0) {
-      clickOnInventoryPosition(findItemPositions("Iron Arrow")[0]);
+    while (true) {
+      int[] positions = findItemPositions("Iron Arrow");
+      if (positions.length == 0) {
+        break;
+      }
+      clickOnInventoryPosition(positions[0]);
       waitRandomMillis(1000, 1500);
-      findItemPositions("Iron Arrow");
     }
   }
 
@@ -175,6 +183,7 @@ public class CombatScript extends com.chromascape.base.BaseScript {
     }
 
     if (clickLocation == null) {
+      // here
       logger.error("click {} Tag click location is null", colourName);
       return;
     }
@@ -217,7 +226,7 @@ public class CombatScript extends com.chromascape.base.BaseScript {
       Instant start = Instant.now();
       Instant deadline = start.plus(Duration.ofSeconds(timeoutSeconds));
       Duration idleRequired = Duration.ofSeconds(3);
-      Duration maxAttempt = Duration.ofSeconds(10);
+      Duration maxAttempt = Duration.ofSeconds(100);
       while (Instant.now().isBefore(deadline)) {
         try {
           Duration remaining = Duration.between(Instant.now(), deadline);
@@ -379,6 +388,19 @@ public class CombatScript extends com.chromascape.base.BaseScript {
       } catch (Exception e) {
         logger.debug("Failed to release {} arrow: {}", direction, e.getMessage());
       }
+    }
+  }
+
+  private void scrollWheelUpDownForTwoSeconds() {
+    Instant deadline = Instant.now().plus(Duration.ofSeconds(2));
+    try {
+      while (Instant.now().isBefore(deadline)) {
+        int rotation = ThreadLocalRandom.current().nextBoolean() ? 1 : -1;
+        controller().mouse().scrollWheel(rotation);
+        waitMillis(60);
+      }
+    } catch (ScriptStoppedException e) {
+      Thread.currentThread().interrupt();
     }
   }
 }
