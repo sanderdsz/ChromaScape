@@ -162,6 +162,10 @@ public class Walker {
   public void pathTo(Point destination, boolean isMembers)
       throws IOException, InterruptedException, ExecutionException {
     List<Tile> path = getPath(destination, isMembers);
+    if (path.isEmpty()) {
+      logger.error("DAX returned an empty path to {}", destination);
+      return;
+    }
     // How far away from the current tile the bot should click
     int maxHorizon = 10;
     int minHorizon = 8;
@@ -177,6 +181,10 @@ public class Walker {
         break;
       }
       // Effectively final variables for the lambda function.
+      if (path.isEmpty()) {
+        logger.warn("No remaining path tiles, breaking walk loop");
+        break;
+      }
       Tile newTarget = chooseNextTarget(path, minHorizon, maxHorizon);
       Tile oldTarget = target;
       // Async precomputing the next click point while waiting for the bot to stop
@@ -200,6 +208,10 @@ public class Walker {
         if (Math.abs(position.x() - target.x()) > 7 || Math.abs(position.y() - target.y()) > 7) {
           logger.error("Too far from path, calling Dax...");
           path = getPath(destination, isMembers);
+          if (path.isEmpty()) {
+            logger.error("DAX returned an empty path after recalculating to {}", destination);
+            break;
+          }
           target = chooseNextTarget(path, minHorizon, maxHorizon);
         }
         clickpoint = getClickLocation(target, getPlayerPosition());
@@ -231,6 +243,9 @@ public class Walker {
    * @return the {@link Tile} selected as the next click target
    */
   private Tile chooseNextTarget(List<Tile> path, int minHorizon, int maxHorizon) {
+    if (path.isEmpty()) {
+      throw new IllegalStateException("chooseNextTarget called with empty path");
+    }
     int targetPos = random.nextInt(minHorizon, maxHorizon + 1);
     Tile target;
     // If we're about to overshoot the last tile, just click the last tile

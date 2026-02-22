@@ -7,7 +7,9 @@ import com.chromascape.utils.core.screen.colour.ColourObj;
 import com.chromascape.utils.core.screen.topology.ColourContours;
 import com.chromascape.utils.core.screen.topology.ChromaObj;
 import java.util.List;
+import java.util.Map;
 import java.util.ArrayList;
+import com.chromascape.utils.actions.HandleCombat;
 import com.chromascape.utils.net.EventConsumer;
 import com.chromascape.utils.net.EventPayload;
 import com.chromascape.utils.net.InventoryConsumer;
@@ -16,6 +18,7 @@ import com.chromascape.utils.net.InventoryItem;
 import com.chromascape.utils.net.SkillConsumer;
 import java.awt.Point;
 import java.util.Arrays;
+import java.util.HashMap;
 import java.awt.Rectangle;
 import java.awt.image.BufferedImage;
 import java.util.OptionalInt;
@@ -35,6 +38,23 @@ public class CombatScript extends com.chromascape.base.BaseScript {
   private static final int MAX_ATTEMPTS = 10000;
   private static final ColourObj yellowTag = new ColourObj("YellowTag", new Scalar(27, 245, 103, 0), new Scalar(42, 255, 195, 0));
 
+  private static final Duration TITLE_IDLE_THRESHOLD = Duration.ofMinutes(1);
+  private Instant lastCombatEnd = Instant.now();
+  private boolean nextTitleHandlerIsStart = true;
+
+  // 1734, 3468
+  // 1773, 3465
+
+  private static final Map<String, Point> COMBAT_RESET_TITLES = new HashMap<>() {
+    {
+      put("Start", new Point(1734, 3468));
+      put("End", new Point(1773, 3465));
+    }
+  };
+
+  private static final Point START_TITLE = COMBAT_RESET_TITLES.get("Start");
+  private static final Point END_TITLE = COMBAT_RESET_TITLES.get("End");
+
   public CombatScript() {
     super();
   }
@@ -42,7 +62,9 @@ public class CombatScript extends com.chromascape.base.BaseScript {
   @Override
   protected void cycle() {
     logger.info("Combat start!");
+    //performPeriodicTitleCheck();
     clickMonster();
+    //startCombat();
     waitUntilStopCombat(100);
 
     currentHitpoints = SkillConsumer.fetchCurrentHitpoints();
@@ -106,6 +128,18 @@ public class CombatScript extends com.chromascape.base.BaseScript {
     }
   }
 
+  private void startCombat() {
+    logger.info("Waiting for combat to start...");  
+    if (Duration.between(lastCombatEnd, Instant.now()).compareTo(TITLE_IDLE_THRESHOLD) >= 0) {
+      logger.info("startCombat: detected {}s idle before combat", TITLE_IDLE_THRESHOLD.getSeconds());
+      //performPeriodicTitleCheck();
+    }
+    boolean stillInCombat = HandleCombat.monitorCombat(logger);
+    if (stillInCombat) {
+      logger.warn("startCombat: still shows combat on completion");
+    }
+  }
+
   /**
    * Attempts to locate and click the purple bank object within the game view. It searches for
    * purple contours, then clicks a randomly distributed point inside the contour, retrying up to a
@@ -131,6 +165,10 @@ public class CombatScript extends com.chromascape.base.BaseScript {
         Thread.currentThread().interrupt();
         return;
       }
+    }
+    if (clickLocation == null) {
+      logger.warn("clickMonster: could not find any purple point after {} attempts", retryCycles);
+      return;
     }
     try {
       controller().mouse().moveTo(clickLocation, "fast");
@@ -237,6 +275,7 @@ public class CombatScript extends com.chromascape.base.BaseScript {
           Duration attemptWindow = remaining.compareTo(maxAttempt) > 0 ? maxAttempt : remaining;
           if (waitForStraightIdle(idleRequired, attemptWindow)) {
             logger.info("Player is idle according to events payload (confirmed 3s)");
+            lastCombatEnd = Instant.now();
             return;
           }
         } catch (Exception e) {
@@ -402,5 +441,55 @@ public class CombatScript extends com.chromascape.base.BaseScript {
     } catch (ScriptStoppedException e) {
       Thread.currentThread().interrupt();
     }
+  }
+
+  private void performPeriodicTitleCheck() {
+    boolean inCombat = true;
+    try {
+      EventPayload payload = EventConsumer.fetchEvent();
+      if (payload == null) {
+        logger.debug("Periodic authentication: event payload missing, assuming not in combat");
+        inCombat = false;
+      } else {
+        inCombat = !payload.isIdle();
+      }
+    } catch (Exception e) {
+      logger.error("Failed to fetch events for periodic title check: {}", e.getMessage());
+      inCombat = true;
+    }
+    if (!inCombat) {
+      if (nextTitleHandlerIsStart) {
+        handleStartTitle();
+      } else {
+        handleEndTitle();
+      }
+      nextTitleHandlerIsStart = !nextTitleHandlerIsStart;
+    }
+  }
+
+  private boolean handleStartTitle() {
+    waitRandomMillis(600, 800);
+      try {
+        logger.info("Going back to start title.");
+        controller().walker().pathTo(START_TITLE, true);
+        waitRandomMillis(4000, 6000);
+      } catch (Exception e) {
+        logger.error("Walker error pathing to start title {}: {}", START_TITLE, e.getMessage(), e);
+        stop();
+      }
+    return false;
+  }
+
+  private boolean handleEndTitle() {
+    waitRandomMillis(600, 800);
+      try {
+        logger.info("Going back to end title.");
+        controller().walker().pathTo(END_TITLE, true);
+        waitRandomMillis(4000, 6000);
+      } catch (Exception e) {
+        logger.error("Walker error pathing to end title {}: {}", END_TITLE, e.getMessage(), e);
+        stop();
+      }
+    return false;
   }
 }
