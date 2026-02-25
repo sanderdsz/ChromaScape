@@ -1,8 +1,12 @@
 package com.chromascape.utils.actions;
 
 import com.chromascape.base.BaseScript;
+import com.chromascape.utils.core.runtime.ScriptStoppedException;
 import com.chromascape.utils.core.screen.colour.ColourObj;
 import com.chromascape.utils.domain.ocr.Ocr;
+import com.chromascape.utils.net.EventConsumer;
+import com.chromascape.utils.net.EventPayload;
+
 import java.awt.Rectangle;
 import java.time.Duration;
 import java.time.Instant;
@@ -60,5 +64,58 @@ public class Idler {
     } catch (Exception e) {
       logger.error("Error while waiting for idle", e);
     }
+  }
+
+  /**
+   * Blocks until the `Is idle` flag from the events endpoint remains true
+   * continuously for the
+   * requested `required` duration, or until `maxWait` elapses.
+   *
+   * @return true if continuous idle observed for `required`, false if timed out
+   *         or interrupted
+   */
+  public static boolean waitForContinuousIdle(Duration required, Duration maxWait) {
+    Instant start = Instant.now();
+    Instant deadline = start.plus(maxWait);
+    Instant idleStart = null;
+    long lastLoggedSecond = 0;
+    while (Instant.now().isBefore(deadline)) {
+      BaseScript.checkInterrupted();
+      try {
+        EventPayload payload = EventConsumer.fetchEvent();
+        if (payload != null && payload.isIdle()) {
+          if (idleStart == null) {
+            idleStart = Instant.now();
+            lastLoggedSecond = 0;
+          } else {
+            long elapsedSeconds = Duration.between(idleStart, Instant.now()).getSeconds();
+            if (elapsedSeconds > lastLoggedSecond && elapsedSeconds <= required.getSeconds()) {
+              lastLoggedSecond = elapsedSeconds;
+              if (elapsedSeconds > 0) {
+                logger.info("Idle for {} second(s)...", elapsedSeconds);
+              }
+            }
+            if (Duration.between(idleStart, Instant.now()).compareTo(required) >= 0) {
+              logger.info("Detected continuous idle for {} seconds", required.getSeconds());
+              return true;
+            }
+          }
+        } else {
+          // reset when not idle
+          idleStart = null;
+          lastLoggedSecond = 0;
+        }
+      } catch (Exception e) {
+        logger.debug("Failed to fetch events while waiting for continuous idle: {}", e.getMessage());
+      }
+      try {
+        BaseScript.waitMillis(100);
+      } catch (ScriptStoppedException e) {
+        Thread.currentThread().interrupt();
+        return false;
+      }
+    }
+    logger.info("waitForContinuousIdle: timed out waiting for continuous idle of {} seconds", required.getSeconds());
+    return false;
   }
 }
