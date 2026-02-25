@@ -39,19 +39,36 @@ public final class Inventory {
       logger.warn("leftClickOnInventoryPosition: controller was null");
       return;
     }
+    clickInventorySlot(controller, slotIndex);
+  }
+
+  /**
+   * Safely clicks the centre point of the provided inventory slot.
+   *
+   * @param controller the controller that exposes mouse and zone helpers
+   * @param slotIndex the inventory slot index to click (0-27)
+   * @return {@code true} when the click is performed successfully
+   */
+  public static boolean clickInventorySlot(Controller controller, int slotIndex) {
+    if (controller == null) {
+      logger.warn("clickInventorySlot: controller was null");
+      return false;
+    }
     try {
       List<Rectangle> slots = controller.zones().getInventorySlots();
       if (slotIndex < 0 || slotIndex >= slots.size()) {
-        logger.warn("leftClickOnInventoryPosition: slotIndex {} out of range", slotIndex);
-        return;
+        logger.warn("clickInventorySlot: slotIndex {} out of range", slotIndex);
+        return false;
       }
       Rectangle invSlot = slots.get(slotIndex);
       Point click = new Point(invSlot.x + invSlot.width / 2, invSlot.y + invSlot.height / 2);
       controller.mouse().moveTo(click, "fast");
       controller.mouse().leftClick();
       logger.info("Left-clicked inventory slot {}", slotIndex);
+      return true;
     } catch (Exception e) {
       logger.error("Failed to left-click inventory slot {}: {}", slotIndex, e.getMessage());
+      return false;
     }
   }
 
@@ -113,6 +130,20 @@ public final class Inventory {
       logger.error("Failed to find item positions for {}: {}", itemName, e.getMessage());
       return new int[0];
     }
+  }
+
+  /**
+   * Finds the first inventory slot index containing the requested item name.
+   *
+   * @param itemName the item to search for; comparisons ignore case
+   * @return the first matching slot index, or {@code -1} when not found
+   */
+  public static int findFirstItemPosition(String itemName) {
+    int[] positions = findItemPositions(itemName);
+    if (positions.length == 0) {
+      return -1;
+    }
+    return positions[0];
   }
   
   /**

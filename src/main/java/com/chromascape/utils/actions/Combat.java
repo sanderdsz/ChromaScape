@@ -4,11 +4,13 @@ import com.chromascape.base.BaseScript;
 import com.chromascape.utils.core.runtime.ScriptStoppedException;
 import com.chromascape.utils.net.CombatConsumer;
 import com.chromascape.utils.net.CombatPayload;
+import com.chromascape.utils.net.SkillConsumer;
 import java.awt.Point;
 import java.awt.image.BufferedImage;
 import java.io.IOException;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.OptionalInt;
 import org.apache.logging.log4j.Logger;
 import org.apache.logging.log4j.LogManager;
 
@@ -26,6 +28,10 @@ import org.apache.logging.log4j.LogManager;
  *   return once a click attempt has been performed (or aborts on interruption).
  * - Call `monitorCombat(...)` to poll the combat telemetry until combat is detected and then
  *   completed, returning whether the player is still in combat when the method exits.
+ * - Call `clickFoodInInventory(...)` to consume one matching food item from inventory.
+ * - Call `buryBonesInInventory(...)` to bury all `Big Bones` and `Bones` found in inventory.
+ * - Call `equipArrowsInInventory(...)` to equip all stacks of the requested arrow type.
+ * - Call `secondsSinceLastCombatStarted()` / `secondsSinceIdleStarted()` for combat/idle timing.
  *
  * <p>Threading & interruption: methods may block briefly while waiting; they honor
  * `BaseScript.checkInterrupted()` and convert interruptions into cooperative cancellation.
@@ -58,7 +64,10 @@ public final class Combat {
    * @param npcName friendly NPC name for logging clarity
    * @param bypassMonsterCheck whether to bypass the monster name check
    */
-  public static void startCombat(BaseScript script, Logger logger, String npcName, boolean bypassMonsterCheck) {
+  public static void startCombat(BaseScript script, 
+    Logger logger, 
+    String npcName, 
+    boolean bypassMonsterCheck) {
     if (bypassMonsterCheck) {
       Point target = null;
       for (int attempt = 1; attempt <= LOCATE_RETRY_CYCLES; attempt++) {
@@ -123,6 +132,28 @@ public final class Combat {
    *     when idle is confirmed
    */
   public static boolean monitorCombat(Logger logger, String npcName) {
+    return monitorCombat(null, logger, npcName, null, true, 0);
+  }
+
+  /**
+   * Polls combat telemetry and optionally heals when current hitpoints are below the threshold.
+   *
+   * @param script owning script (required when food checks are enabled)
+   * @param logger logger for progress and fallback information
+   * @param npcName expected NPC name for contextual logging
+   * @param foodName inventory item name to consume when low on hitpoints
+   * @param bypassFoodCheck when {@code true}, skips hitpoints/food checks
+   * @param hitpointsThreshold threshold below which one food click is attempted per tick
+   * @return {@code true} if the player is still in combat when the method exits, {@code false}
+   *     when idle is confirmed
+   */
+  public static boolean monitorCombat(
+      BaseScript script,
+      Logger logger,
+      String npcName,
+      String foodName,
+      boolean bypassFoodCheck,
+      int hitpointsThreshold) {
     // Track this monitor pass lifecycle.
     Instant start = Instant.now();
     // seenCombat: we have observed at least one in-combat payload in this pass.
@@ -158,6 +189,23 @@ public final class Combat {
         continue;
       }
       nextCheck = now.plus(CHECK_INTERVAL);
+
+      // On each monitor tick, optionally check current hitpoints and consume one food
+      // item when HP drops below the configured threshold.
+      if (!bypassFoodCheck) {
+        OptionalInt currentHitpoints = fetchCurrentHitpoints();
+        if (currentHitpoints.isPresent() && currentHitpoints.getAsInt() < hitpointsThreshold) {
+          logger.info(
+              "monitorCombat: hitpoints {} below threshold {}, attempting to eat {}",
+              currentHitpoints.getAsInt(),
+              hitpointsThreshold,
+              describeTarget(foodName, "food"));
+          boolean ateFood = clickFoodInInventory(script, logger, foodName);
+          if (ateFood) {
+            BaseScript.waitMillis((int) Math.min(ACTION_DELAY.toMillis(), Integer.MAX_VALUE));
+          }
+        }
+      }
 
       // Fetch combat telemetry and update state machine.
       try {
@@ -261,6 +309,108 @@ public final class Combat {
     }
     logger.debug("Seconds idle: start={}, now={}", last, Instant.now());
     return Duration.between(last, Instant.now()).getSeconds();
+  }
+
+  /**
+   * Retrieves the player's current hitpoints from the skills telemetry endpoint.
+   *
+   * @return current boosted hitpoints when available, otherwise {@link OptionalInt#empty()}
+   */
+  public static OptionalInt fetchCurrentHitpoints() {
+    OptionalInt hitpoints = SkillConsumer.fetchCurrentHitpoints();
+    if (hitpoints.isPresent()) {
+      logger.debug("fetchCurrentHitpoints: {}", hitpoints.getAsInt());
+    } else {
+      logger.info("fetchCurrentHitpoints: hitpoints unavailable from skills payload");
+    }
+    return hitpoints;
+  }
+
+  /**
+   * Finds the requested food in inventory and clicks its slot.
+   *
+   * @param script owning script (provides zones and mouse access)
+   * @param logger logger to emit contextual messages
+   * @param foodName inventory item name to search (case-insensitive)
+   * @return {@code true} when a matching food item is clicked, {@code false} otherwise
+   */
+  public static boolean clickFoodInInventory(BaseScript script, Logger logger, String foodName) {
+    String normalizedFoodName = normalizeName(foodName);
+    if (normalizedFoodName == null) {
+      logger.warn("clickFoodInInventory: food name not provided");
+      return false;
+    }
+    int slotIndex = Inventory.findFirstItemPosition(normalizedFoodName);
+    if (slotIndex < 0) {
+      logger.info("clickFoodInInventory: {} not found in inventory", normalizedFoodName);
+      return false;
+    }
+
+    boolean clicked = Inventory.clickInventorySlot(script.controller(), slotIndex);
+    if (clicked) {
+      logger.info("clickFoodInInventory: clicked {} in inventory slot {}", normalizedFoodName, slotIndex);
+      return true;
+    }
+
+    logger.warn("clickFoodInInventory: failed to click {} in inventory slot {}", normalizedFoodName, slotIndex);
+    return false;
+  }
+
+  /**
+   * Buries all bones in inventory, following the same order used by scripts:
+   * {@code Big Bones} first, then {@code Bones}.
+   *
+   * <p>For each matching item found, clicks the slot and waits a random delay
+   * between 1000 and 1500 milliseconds before searching again.
+   *
+   * @param script owning script (provides zones and mouse access)
+   * @param logger logger to emit contextual messages
+   */
+  public static void buryBonesInInventory(BaseScript script, Logger logger) {
+    clickAllOfItemInInventory(script, logger, "Big Bones", "buryBonesInInventory");
+    clickAllOfItemInInventory(script, logger, "Bones", "buryBonesInInventory");
+  }
+
+  /**
+   * Equips all arrow stacks found in inventory.
+   *
+   * <p>For each matching item found, clicks the slot and waits a random delay
+   * between 1000 and 1500 milliseconds before searching again.
+   *
+   * @param script owning script (provides zones and mouse access)
+   * @param logger logger to emit contextual messages
+   */
+  public static void equipArrowsInInventory(BaseScript script, Logger logger, String arrowType) {
+    clickAllOfItemInInventory(script, logger, arrowType, "equipArrowsInInventory");
+  }
+
+  private static void clickAllOfItemInInventory(
+      BaseScript script,
+      Logger logger,
+      String itemName,
+      String actionName) {
+    while (true) {
+      BaseScript.checkInterrupted();
+      int slotIndex = Inventory.findFirstItemPosition(itemName);
+      if (slotIndex < 0) {
+        break;
+      }
+
+      boolean clicked = Inventory.clickInventorySlot(script.controller(), slotIndex);
+      if (!clicked) {
+        logger.warn("{}: failed to click {} in inventory slot {}", actionName, itemName, slotIndex);
+        break;
+      }
+
+      logger.info("{}: clicked {} in inventory slot {}", actionName, itemName, slotIndex);
+
+      try {
+        BaseScript.waitRandomMillis(1000, 1500);
+      } catch (ScriptStoppedException e) {
+        Thread.currentThread().interrupt();
+        return;
+      }
+    }
   }
 
   /**
