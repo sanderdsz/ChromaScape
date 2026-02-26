@@ -96,6 +96,19 @@ public class Kinput {
         int clickCount,
         boolean popupTrigger,
         int button);
+
+    boolean KInput_MouseWheelEvent(
+      int pid,
+      int eventID,
+      long when,
+      int modifiers,
+      int x,
+      int y,
+      int clickCount,
+      boolean popupTrigger,
+      int scrollType,
+      int scrollAmount,
+      int wheelRotation);
   }
 
   private static final int FOCUS_GAINED = 1004;
@@ -306,6 +319,32 @@ public class Kinput {
     if (!kinput.KInput_KeyEvent(
         pid, eventID, System.currentTimeMillis(), 0, keyCode, (short) 0, 0)) {
       throw new RuntimeException("Virtual key event failed for: " + keyName);
+    }
+  }
+
+  /**
+   * Sends a mouse wheel event at the specified coordinates.
+   *
+   * @param x The client x coordinate to target.
+   * @param y The client y coordinate to target.
+   * @param rotation Positive values scroll up, negative values scroll down.
+   */
+  public synchronized void scrollWheel(int x, int y, int rotation) {
+    focus();
+    int scrollAmount = Math.abs(rotation);
+    if (!kinput.KInput_MouseWheelEvent(
+        pid,
+        MouseEventType.MOUSE_WHEEL.id,
+        System.currentTimeMillis(),
+        0,
+        x,
+        y,
+        0,
+        false,
+        0,
+        scrollAmount,
+        rotation)) {
+      throw new RuntimeException("Mouse wheel event failed");
     }
   }
 
