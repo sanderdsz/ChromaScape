@@ -9,13 +9,13 @@ import com.chromascape.utils.core.screen.topology.ChromaObj;
 import java.util.List;
 import java.util.Map;
 import java.util.ArrayList;
-import com.chromascape.utils.actions.HandleCombat;
+import com.chromascape.utils.actions.Combat;
+import com.chromascape.utils.actions.Inventory;
 import com.chromascape.utils.net.EventConsumer;
 import com.chromascape.utils.net.EventPayload;
 import com.chromascape.utils.net.InventoryConsumer;
 import com.chromascape.utils.net.InventoryPayload;
 import com.chromascape.utils.net.InventoryItem;
-import com.chromascape.utils.net.SkillConsumer;
 import java.awt.Point;
 import java.util.Arrays;
 import java.util.HashMap;
@@ -24,6 +24,7 @@ import java.awt.image.BufferedImage;
 import java.util.OptionalInt;
 import java.util.concurrent.ThreadLocalRandom;
 import org.bytedeco.opencv.opencv_core.Scalar;
+
 import java.io.IOException;
 import java.time.Duration;
 import java.time.Instant;
@@ -33,17 +34,14 @@ import org.apache.logging.log4j.Logger;
 public class CombatScript extends com.chromascape.base.BaseScript {
 
   private final Logger logger = LogManager.getLogger(CombatScript.class);
-  private OptionalInt currentHitpoints = OptionalInt.empty();
   public static Point lastMonsterLocation;
+  public static String lastMonsterName;
   private static final int MAX_ATTEMPTS = 10000;
-  private static final ColourObj yellowTag = new ColourObj("YellowTag", new Scalar(27, 245, 103, 0), new Scalar(42, 255, 195, 0));
+  private static final ColourObj yellowTag = new ColourObj("YellowTag", new Scalar(27, 245, 103, 0),
+      new Scalar(42, 255, 195, 0));
 
-  private static final Duration TITLE_IDLE_THRESHOLD = Duration.ofMinutes(1);
-  private Instant lastCombatEnd = Instant.now();
+  private static final Duration TITLE_IDLE_THRESHOLD = Duration.ofSeconds(45);
   private boolean nextTitleHandlerIsStart = true;
-
-  // 1734, 3468
-  // 1773, 3465
 
   private static final Map<String, Point> COMBAT_RESET_TITLES = new HashMap<>() {
     {
@@ -61,97 +59,73 @@ public class CombatScript extends com.chromascape.base.BaseScript {
 
   @Override
   protected void cycle() {
-    logger.info("Combat start!");
-    //performPeriodicTitleCheck();
-    clickMonster();
-    //startCombat();
-    waitUntilStopCombat(100);
-
-    currentHitpoints = SkillConsumer.fetchCurrentHitpoints();
-    currentHitpoints.ifPresent(hp -> logger.info("Current hitpoints: {}", hp));
-
-    if (currentHitpoints.isPresent() && currentHitpoints.getAsInt() < 10) {
-      logger.error("Critical hitpoints {} detected; stopping script", currentHitpoints.getAsInt());
-      stop();
-      return;
-    }
-
-    /* 
-    if (currentHitpoints.isPresent() && currentHitpoints.getAsInt() < 60) {
-      logger.info("Current hitpoints {} below 60, waiting for idle and before picking up items", currentHitpoints.getAsInt());
-      int[] cookedMeatPositions = findItemPositions("Cooked Meat");
-      if (cookedMeatPositions.length == 0) {
-        logger.warn("Cooked Meat not found while low on hitpoints; skipping heal and continuing");
-      } else {
-        clickOnInventoryPosition(cookedMeatPositions[0]);
-        waitRandomMillis(1000, 1500);
-      }
-    }*/
-    
-    pressRandomArrowForTwoSeconds();
-    int yellowCount = countItem(yellowTag, "Yellow");
-
-    while (!isInventoryFull()) {
-      yellowCount = countItem(yellowTag, "Yellow");
-      if (yellowCount <= 0) {
-        break;
-      }
-      clickTag(yellowTag, "Yellow");
-      waitRandomMillis(1500, 2000);
-    }
-
+    logger.info("Combat script start!");
     while (true) {
-      int[] positions = findItemPositions("Big Bones");
-      if (positions.length == 0) {
-        break;
-      }
-      clickOnInventoryPosition(positions[0]);
-      waitRandomMillis(1000, 1500);
-    }
+      startCombat("Sand Crab");
 
-    while (true) {
-      int[] positions = findItemPositions("Bones");
-      if (positions.length == 0) {
-        break;
+      boolean inCombat = monitorCombat("Sand Crab");
+      while (inCombat) {
+        logger.info("Combat still active, waiting 1s before re-check");
+        try {
+          waitMillis(1000);
+        } catch (ScriptStoppedException e) {
+          Thread.currentThread().interrupt();
+          return;
+        }
+        inCombat = monitorCombat("Sand Crab");
       }
-      clickOnInventoryPosition(positions[0]);
-      waitRandomMillis(1000, 1500);
-    }
 
-    while (true) {
-      int[] positions = findItemPositions("Iron Arrow");
-      if (positions.length == 0) {
-        break;
+      int yellowCount = countItem(yellowTag, "Yellow");
+      while (yellowCount > 0 && !Inventory.isInventoryFull()) {
+        clickTag(yellowTag, "Yellow");
+        waitRandomMillis(1500, 2000);
+        yellowCount = countItem(yellowTag, "Yellow");
       }
-      clickOnInventoryPosition(positions[0]);
-      waitRandomMillis(1000, 1500);
+
+      Combat.equipArrowsInInventory(this, logger, "Iron Arrow");
+
+      long idleSeconds = secondsSinceIdleStarted();
+      if (idleSeconds > TITLE_IDLE_THRESHOLD.getSeconds()) {
+        logger.info("Idle {}s exceeded threshold {}s, performing periodic title check", idleSeconds,
+            TITLE_IDLE_THRESHOLD.getSeconds());
+        performPeriodicTitleCheck();
+      }
     }
   }
 
-  private void startCombat() {
-    logger.info("Waiting for combat to start...");  
-    if (Duration.between(lastCombatEnd, Instant.now()).compareTo(TITLE_IDLE_THRESHOLD) >= 0) {
-      logger.info("startCombat: detected {}s idle before combat", TITLE_IDLE_THRESHOLD.getSeconds());
-      //performPeriodicTitleCheck();
-    }
-    boolean stillInCombat = HandleCombat.monitorCombat(logger);
-    if (stillInCombat) {
-      logger.warn("startCombat: still shows combat on completion");
-    }
+  private void startCombat(String npcName) {
+    Combat.startCombat(this, logger, npcName, true);
+  }
+
+  private boolean monitorCombat(String npcName) {
+    return Combat.monitorCombat(this, logger, npcName, "Cooked Meat", false, 60);
+  
+  }
+
+  private long secondsSinceLastCombatStarted() {
+    return Combat.secondsSinceLastCombatStarted();
+  }
+
+  private long secondsSinceIdleStarted() {
+    return Combat.secondsSinceIdleStarted();
   }
 
   /**
-   * Attempts to locate and click the purple bank object within the game view. It searches for
-   * purple contours, then clicks a randomly distributed point inside the contour, retrying up to a
-   * maximum number of attempts. Logs failures and stops the script if unable to click successfully.
+   * Attempts to locate and click the purple bank object within the game view. It
+   * searches for
+   * purple contours, then clicks a randomly distributed point inside the contour,
+   * retrying up to a
+   * maximum number of attempts. Logs failures and stops the script if unable to
+   * click successfully.
    */
-  private void clickMonster() {
+  private String clickMonster() {
     Point clickLocation = null;
     final int retryCycles = 3;
 
     for (int attempt = 1; attempt <= retryCycles; attempt++) {
       try {
-        clickLocation = PointSelector.getRandomPointInColour(controller().zones().getGameView(), "Purple", MAX_ATTEMPTS, 15.0);
+        clickLocation = PointSelector.getRandomPointInColour(controller().zones().getGameView(), "Purple", MAX_ATTEMPTS,
+            15.0);
       } catch (Exception e) {
         logger.error("Failed while generating monster click location: {}", String.valueOf(e));
       }
@@ -163,12 +137,12 @@ public class CombatScript extends com.chromascape.base.BaseScript {
         Thread.sleep(1000L);
       } catch (InterruptedException ie) {
         Thread.currentThread().interrupt();
-        return;
+        return null;
       }
     }
     if (clickLocation == null) {
       logger.warn("clickMonster: could not find any purple point after {} attempts", retryCycles);
-      return;
+      return null;
     }
     try {
       controller().mouse().moveTo(clickLocation, "fast");
@@ -176,8 +150,11 @@ public class CombatScript extends com.chromascape.base.BaseScript {
       String monsterName = captureMonsterName();
       logger.info("Clicked on purple monster: {}", monsterName);
       lastMonsterLocation = clickLocation;
+      lastMonsterName = monsterName;
+      return monsterName;
     } catch (Exception e) {
       logger.error("Error while clicking monster: {}", e.getMessage(), e);
+      return null;
     }
   }
 
@@ -212,9 +189,8 @@ public class CombatScript extends com.chromascape.base.BaseScript {
   private void clickTag(ColourObj colour, String colourName) {
     Point clickLocation = new Point();
     try {
-      clickLocation =
-          PointSelector.getRandomPointByColourObj(
-              controller().zones().getGameView(), colour, MAX_ATTEMPTS, 15.0);
+      clickLocation = PointSelector.getRandomPointByColourObj(
+          controller().zones().getGameView(), colour, MAX_ATTEMPTS, 15.0);
     } catch (Exception e) {
       logger.error("Failed while generating {} item click location: {}", colourName, String.valueOf(e));
       return;
@@ -275,7 +251,6 @@ public class CombatScript extends com.chromascape.base.BaseScript {
           Duration attemptWindow = remaining.compareTo(maxAttempt) > 0 ? maxAttempt : remaining;
           if (waitForStraightIdle(idleRequired, attemptWindow)) {
             logger.info("Player is idle according to events payload (confirmed 3s)");
-            lastCombatEnd = Instant.now();
             return;
           }
         } catch (Exception e) {
@@ -288,10 +263,12 @@ public class CombatScript extends com.chromascape.base.BaseScript {
   }
 
   /**
-   * Blocks until the `Is idle` flag from the events endpoint remains true continuously for the
+   * Blocks until the `Is idle` flag from the events endpoint remains true
+   * continuously for the
    * requested `required` duration, or until `maxWait` elapses.
    *
-   * @return true if continuous idle observed for `required`, false if timed out or interrupted
+   * @return true if continuous idle observed for `required`, false if timed out
+   *         or interrupted
    */
   private boolean waitForStraightIdle(Duration required, Duration maxWait) {
     Instant start = Instant.now();
@@ -336,79 +313,6 @@ public class CombatScript extends com.chromascape.base.BaseScript {
     }
     logger.info("waitForStraightIdle: timed out waiting for continuous idle of {} seconds", required.getSeconds());
     return false;
-  }
-
-  private void clickOnInventoryPosition(int pos) {
-    try {
-      Rectangle invSlot = controller().zones().getInventorySlots().get(pos);
-      Point click = new Point(invSlot.x + invSlot.width / 2, invSlot.y + invSlot.height / 2);
-      controller().mouse().moveTo(click, "fast");
-      controller().mouse().leftClick();
-      logger.info("Clicked inventory slot {}", pos);
-    } catch (Exception e) {
-      logger.error("Failed to click inventory slot {}: {}", pos, e.getMessage());
-    }
-  }
-
-  private boolean isInventoryFull() {
-    try {
-      InventoryPayload payload = InventoryConsumer.fetchInventory();
-      if (payload == null || payload.getInventory() == null) {
-        logger.debug("Inventory payload empty or null");
-        return false;
-      }
-      int validCount = 0;
-      for (InventoryItem it : payload.getInventory()) {
-        if (it != null && it.getName() != "null" && !it.getName().isBlank() && it.getQuantity() > 0) {
-          validCount += 1;
-        }
-      }
-      logger.info("Inventory contains {} valid items (raw size {})", validCount, payload.getInventory().size());
-      return validCount >= 28;
-    } catch (InterruptedException ie) {
-      Thread.currentThread().interrupt();
-      logger.error("Inventory fetch interrupted: {}", ie.getMessage());
-      return false;
-    } catch (Exception e) {
-      logger.error("Failed to fetch inventory: {}", e.getMessage());
-      return false;
-    }
-  }
-
-  /**
-   * Finds all inventory positions (0-27) that contain the given item name.
-   * Comparison is case-insensitive. Returns an empty array if none found or on error.
-   */
-  private int[] findItemPositions(String itemName) {
-    if (itemName == null || itemName.isBlank()) {
-      return new int[0];
-    }
-    try {
-      InventoryPayload payload = InventoryConsumer.fetchInventory();
-      if (payload == null || payload.getInventory() == null) {
-        return new int[0];
-      }
-      List<InventoryItem> inv = payload.getInventory();
-      ArrayList<Integer> positions = new ArrayList<>();
-      for (int i = 0; i < inv.size(); i++) {
-        InventoryItem it = inv.get(i);
-        if (it != null && it.getName() != null && it.getName().equalsIgnoreCase(itemName)) {
-          positions.add(i);
-        }
-      }
-      int[] out = new int[positions.size()];
-      for (int i = 0; i < positions.size(); i++) {
-        out[i] = positions.get(i);
-      }
-      logger.info("Found item positions for {}: {}", itemName, Arrays.toString(out));
-      return out;
-    } catch (InterruptedException ie) {
-      Thread.currentThread().interrupt();
-      return new int[0];
-    } catch (Exception e) {
-      logger.error("Failed to find item positions for {}: {}", itemName, e.getMessage());
-      return new int[0];
-    }
   }
 
   private void pressRandomArrowForTwoSeconds() {
@@ -469,27 +373,27 @@ public class CombatScript extends com.chromascape.base.BaseScript {
 
   private boolean handleStartTitle() {
     waitRandomMillis(600, 800);
-      try {
-        logger.info("Going back to start title.");
-        controller().walker().pathTo(START_TITLE, true);
-        waitRandomMillis(4000, 6000);
-      } catch (Exception e) {
-        logger.error("Walker error pathing to start title {}: {}", START_TITLE, e.getMessage(), e);
-        stop();
-      }
+    try {
+      logger.info("Going back to start title.");
+      controller().walker().pathTo(START_TITLE, true);
+      waitRandomMillis(4000, 6000);
+    } catch (Exception e) {
+      logger.error("Walker error pathing to start title {}: {}", START_TITLE, e.getMessage(), e);
+      stop();
+    }
     return false;
   }
 
   private boolean handleEndTitle() {
     waitRandomMillis(600, 800);
-      try {
-        logger.info("Going back to end title.");
-        controller().walker().pathTo(END_TITLE, true);
-        waitRandomMillis(4000, 6000);
-      } catch (Exception e) {
-        logger.error("Walker error pathing to end title {}: {}", END_TITLE, e.getMessage(), e);
-        stop();
-      }
+    try {
+      logger.info("Going back to end title.");
+      controller().walker().pathTo(END_TITLE, true);
+      waitRandomMillis(4000, 6000);
+    } catch (Exception e) {
+      logger.error("Walker error pathing to end title {}: {}", END_TITLE, e.getMessage(), e);
+      stop();
+    }
     return false;
   }
 }
